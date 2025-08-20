@@ -4,7 +4,7 @@
 #include <mach/mach_time.h>
 #include "custommem.h"
 
-#define N 10000
+#define N 20000
 
 /*
 Latency: How fast are malloc() / free() / realloc()?
@@ -12,8 +12,6 @@ Latency: How fast are malloc() / free() / realloc()?
 Throughput: How many allocations per second?
 
 Fragmentation: How much memory is wasted?
-
-
 */
 
 /* Timing utilities */
@@ -30,115 +28,120 @@ static void print_timing(const char *operation, int count, double elapsed)
            count, elapsed, elapsed / count * 1e6, count / elapsed);
 }
 
+static void get_peak_rss_kb(void) {
+    /* Memory usage statistics */
+        struct rusage usage;
+        if (getrusage(RUSAGE_SELF, &usage) == 0) {
+#ifdef __APPLE__
+            /* On macOS, ru_maxrss is in bytes */
+            printf("Max RSS: %.2f MB\n",
+                   (double) usage.ru_maxrss / (1024 * 1024));
+            printf("Memory Utilization: ~%.3f %%\n", (double) (N*2853)/usage.ru_maxrss);
+#else
+            /* On Linux, ru_maxrss is in kilobytes */
+            printf("Max RSS: %lu KB\n", usage.ru_maxrss);
+            //printf("Memory per node: ~%.2f bytes\n",
+                   //(double) usage.ru_maxrss * 1024 / count);
+#endif
+        }
+}
 
-void test_custommem()
+void test_custommem_fixsize(int frag)
 {
+    long long pre_size = 0;
     init_custommem_helper();
     void* ptr_custoMalloc[N];
-    for (int i = 0; i < N; ++i)
+    for (int i = 0; i < N; i++){
+        size_t size = rand()%300+2853;
+        ptr_custoMalloc[i] = customMalloc(size);
+        pre_size += size;
+    }
+    for(int i = 0; i < N; i+=frag){
+        //printf("ptr i = %d ", i);
+        customFree(ptr_custoMalloc[i]);
         ptr_custoMalloc[i] = NULL;
-    int alloc_count = 0;
-
+    }
     struct timespec start, end;
+
+    void* real_ptr_custoMalloc[N];
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int i = 0; i < N; ++i){
-        int index = rand()%N;
-        if(ptr_custoMalloc[index]){  // Deallocation benchmark
-            customFree(ptr_custoMalloc[index]);
-            ptr_custoMalloc[index] = NULL;
-            alloc_count--;
-        }else if (rand()&1 && !ptr_custoMalloc[index]){ // Allocation benchmark
-            ptr_custoMalloc[index] = customMalloc(rand()%50000+128);
-            alloc_count++;
-        }else{
-        i-- ;
-        }
+    for (int i = 0; i < N; i++){
+        real_ptr_custoMalloc[i] = customMalloc(2853);
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
-    print_timing("customMalloc rand", N, elapsed);
-    fini_custommem_helper();
-}
-void test_custommem_fixsize()
-{
-    init_custommem_helper();
-    void* ptr_custoMalloc[N];
-    for (int i = 0; i < N; ++i)
-        ptr_custoMalloc[i] = NULL;
-    struct timespec start, end;
+    print_timing("customMalloc rbtree", N, elapsed);
+    get_peak_rss_kb();
+
+
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int i = 0; i < N; ++i){
-        int index = rand()%N;
-        if(ptr_custoMalloc[index]){  // Deallocation benchmark
-            customFree(ptr_custoMalloc[index]);
-            ptr_custoMalloc[index] = NULL;
-        }else if (rand()&1 && !ptr_custoMalloc[index]){ // Allocation benchmark
-            ptr_custoMalloc[index] = customMalloc(56);
-        }else{
-        i-- ;
-        }
+    for(int i = 0; i < N; i++){
+        //printf("real_ptr i = %d ", i);
+        customFree(real_ptr_custoMalloc[i]);
+        real_ptr_custoMalloc[i] = NULL;
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
-    double elapsed = timespec_diff(&start, &end);
-
-    print_timing("customMalloc 56", N, elapsed);
-    fini_custommem_helper();
-}
-
-void test_malloc()
-{
-    void* ptr_Malloc[N];
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-
-     // Allocation benchmark
-    for (int i = 0; i < N; ++i)
-        ptr_Malloc[i] = NULL;
-    // Deallocation benchmark
-    for (int i = 0; i < N; ++i){
-        int index = rand()%N;
-        if(ptr_Malloc[index]){  // Deallocation benchmark
-            free(ptr_Malloc[index]);
-            ptr_Malloc[index] = NULL;
-        }else if (rand()&1 && !ptr_Malloc[index]){ // Allocation benchmark
-            ptr_Malloc[index] = malloc(rand()%50000+128);
-        }else{
-        i-- ;
-        }
-    }
+    elapsed = timespec_diff(&start, &end);
+    print_timing("customFree rbtree", N, elapsed);
     
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    double elapsed = timespec_diff(&start, &end);
-
-    print_timing("Malloc rand", N, elapsed);
+   
+    for(int i = 0; i < N; i++){
+        //printf("ptr i = %d ", i);
+        if(ptr_custoMalloc[i])customFree(ptr_custoMalloc[i]);
+    }
+    print_timing("customMalloc rbtree fix", N, elapsed);
+    printf("Shallow Size = %lld\n",N*(2583+sizeof(blockmark_t))+pre_size);
+    fini_custommem_helper();
 }
 
-void test_malloc_fix()
+void test_custommem_box64_fixsize(int frag)
 {
-    void* ptr_Malloc[N];
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    long long pre_size = 0;
+    init_custommem_helper_box64();
+    void* ptr_custoMalloc[N];
+    for (int i = 0; i < N; i++){
+        size_t size = rand()%300+2853;
+        ptr_custoMalloc[i] = customMalloc_box64(size);
+        pre_size += size;
+    }
+    for(int i = 0; i < N; i+=frag){
+        customFree_box64(ptr_custoMalloc[i]);
+        ptr_custoMalloc[i] = NULL;
 
-     // Allocation benchmark
-    for (int i = 0; i < N; ++i)
-        ptr_Malloc[i] = NULL;
-    // Deallocation benchmark
-    for (int i = 0; i < N; ++i){
-        int index = rand()%N;
-        if(ptr_Malloc[index]){  // Deallocation benchmark
-            free(ptr_Malloc[index]);
-            ptr_Malloc[index] = NULL;
-        }else if (rand()&1 && !ptr_Malloc[index]){ // Allocation benchmark
-            ptr_Malloc[index] = malloc(56);
-        }else{
-        i-- ;
-        }
+    }
+   
+    struct timespec start, end;
+    void* real_ptr_custoMalloc[N];
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int i = 0; i < N; i++)
+        real_ptr_custoMalloc[i] = customMalloc_box64(2853);
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed = timespec_diff(&start, &end);
+    print_timing("customMalloc box64", N, elapsed);
+    get_peak_rss_kb();
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for(int i = 0; i < N; i++){
+        customFree_box64(real_ptr_custoMalloc[i]);
+        real_ptr_custoMalloc[i] = NULL;
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
-    double elapsed = timespec_diff(&start, &end);
+    elapsed = timespec_diff(&start, &end);
+    print_timing("customFree box64", N, elapsed);
+    
+    
+    for(int i = 0; i < N; i++){
+        if(ptr_custoMalloc[i])customFree_box64(ptr_custoMalloc[i]);
+        ptr_custoMalloc[i] = NULL;
 
-    print_timing("Malloc 56", N, elapsed);
+    }
+   
+    printf("Shallow Size = %lld\n",N*(2583+sizeof(blockmark_box64_t)) + pre_size);
+    fini_custommem_helper_box64();
 }
+
+
+
+
 
 /*
 An allocator’s throughput, which is defined as the
@@ -147,15 +150,22 @@ tor completes 500 allocate requests and 500 free requests in 1 second, then its
 throughput is 1,000 operations per second.
 */
 
+void test_mixed(int frag)
+{
+    printf("\nPrepared for allocator perf test under heavy fragmentation... \n(free every %d block in list A, then allocate all blocks in list B from the same pool)\n", frag);
+    printf("Test Times: %lld \n", N);
+    printf("MMAPSIZE: %lld\n", MMAPSIZE);
+    test_custommem_fixsize(frag);
+    test_custommem_box64_fixsize(frag);
+}
 
 
-
-int main(){
-    srand(time(NULL));
-    test_custommem();
-    test_custommem_fixsize();
-    test_malloc();
-    test_malloc_fix();
+int main(int argc, char *argv[]){
+    if (argc > 1) {
+        int frag_times = atoi(argv[1]);
+          srand(time(NULL));
+        test_mixed(frag_times);
+    }   
     return 0;
 }
 

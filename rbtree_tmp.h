@@ -165,8 +165,8 @@ typedef bool (*rb_cmp_value_t)(const rb_node_t *a, const size_t value);
 typedef struct {
     rb_node_t *root;   /**< Root node of the tree */
     rb_cmp_t cmp_func; /**< Comparison function for nodes */
-    rb_cmp_value_t cmp_func_by_value;
-    rb_cmp_value_t cmp_qual;
+    //rb_cmp_value_t cmp_func_by_value;
+    unsigned long long count;
 
 #if _RB_DISABLE_ALLOCA != 0
     uint8_t max_depth; /**< Maximum depth (only needed for fixed stack) */
@@ -756,7 +756,7 @@ rb_validation_t rb_validate_cached_tree(rb_cached_t *tree);
  */
 void rb_print_validation_report(const rb_validation_t *result);
 
-rb_node_t* find_best_fit(rb_t *tree, size_t size);
+rb_node_t *get_child(rb_node_t *n, rb_side_t side);
 
 #endif /* _RB_ENABLE_PROPERTY_VALIDATION */
 
