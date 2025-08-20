@@ -18,9 +18,6 @@ typedef enum {
     MEM_MMAP = 3
 } mem_flag_t;
 static rbtree_t*  blockstree = NULL;
-static rbtree_t*  blockstree_box64 = NULL;
-
-
 
 #define BTYPE_MAP   1
 #define BTYPE_LIST  0
@@ -36,15 +33,6 @@ typedef struct blocklist_s {
     rb_t               free_list;
 } blocklist_t;
 
-typedef struct blocklist_box64_s {
-    void*               block;
-    size_t              maxfree;
-    size_t              size;
-    void*               first;
-    uint32_t            lowest;
-    uint8_t             type;
-} blocklist_box64_t;
-
 #define MMAPSIZE (512*1024)     // allocate 512kb sized blocks
 #define MMAPSIZE64 (64*2048)   // allocate 128kb sized blocks for 64byte map
 #define MMAPSIZE128 (128*1024)  // allocate 128kb sized blocks for 128byte map
@@ -54,12 +42,6 @@ typedef struct blocklist_box64_s {
 static int                 n_blocks = 0;       // number of blocks for custom malloc
 static int                 c_blocks = 0;       // capacity of blocks for custom malloc
 static blocklist_t*        p_blocks = NULL;    // actual blocks for custom malloc
-
-/*For Box64*/
-static int                 n_blocks_box64 = 0;       // number of blocks for custom malloc
-static int                 c_blocks_box64 = 0;       // capacity of blocks for custom malloc
-static blocklist_t*        p_blocks_box64 = NULL;    // actual blocks for custom malloc
-
 
 typedef union mark_s {
     struct {
@@ -74,12 +56,6 @@ typedef struct blockmark_s {
     mark_t  next;
     uint8_t mark[];
 } blockmark_t;
-
-typedef struct blockmark_box64_s {
-    mark_t  prev;
-    mark_t  next;
-    uint8_t mark[];
-} blockmark_box64_t;
 
 #define NEXT_BLOCK(b) (blockmark_t*)((uintptr_t)(b) + (b)->next.offs)
 #define PREV_BLOCK(b) (blockmark_t*)(((uintptr_t)(b) - (b)->prev.offs))
@@ -252,11 +228,6 @@ void add_blockstree(uintptr_t start, uintptr_t end, int idx)
     }
     reent = 0;
 }
-
-static uintptr_t    defered_prot_p = 0;
-static size_t       defered_prot_sz = 0;
-static uint32_t     defered_prot_prot = 0;
-static sigset_t     critical_prot = {0};
 
 // the BTYPE_MAP is a simple bitmap based allocator: it will allocate slices of 128bytes only, from a large 128k mapping
 // the bitmap itself is also allocated in that mapping, as a slice of 128bytes, at the end of the mapping (and so marked as allocated)
@@ -504,7 +475,10 @@ void init_custommem_helper()
     if(n_blocks)
         for(int i=0; i<n_blocks; ++i)
             rb_set(blockstree, (uintptr_t)p_blocks[i].block, (uintptr_t)p_blocks[i].block+p_blocks[i].size, i);
+    n_blocks = 0;       // number of blocks for custom malloc
+    c_blocks = 0;    
 }
+
 
 
 void fini_custommem_helper()
@@ -521,5 +495,336 @@ void fini_custommem_helper()
     n_blocks = 0;       // number of blocks for custom malloc
     c_blocks = 0;    
 }
+
+/*For Box64*/
+static rbtree_t*  blockstree_box64 = NULL;
+
+
+typedef struct blocklist_box64_s {
+    void*               block;
+    size_t              maxfree;
+    size_t              size;
+    void*               first;
+    uint32_t            lowest;
+    uint8_t             type;
+} bblocklist_box64_t;
+
+static int                 n_blocks_box64 = 0;       // number of blocks for custom malloc
+static int                 c_blocks_box64 = 0;       // capacity of blocks for custom malloc
+static bblocklist_box64_t*        p_blocks_box64 = NULL;    // actual blocks for custom malloc
+
+typedef struct blockmark_box64_s {
+    mark_t  prev;
+    mark_t  next;
+    uint8_t mark[];
+} blockmark_box64_t;
+
+#define NEXT_BLOCK_BOX64(b) (blockmark_box64_t*)((uintptr_t)(b) + (b)->next.offs)
+#define PREV_BLOCK_BOX64(b) (blockmark_box64_t*)(((uintptr_t)(b) - (b)->prev.offs))
+#define LAST_BLOCK_BOX64(b, s) (blockmark_box64_t*)(((uintptr_t)(b)+(s))-sizeof(blockmark_box64_t))
+#define SIZE_BLOCK_BOX64(b) (((ssize_t)b.offs)-sizeof(blockmark_box64_t))
+
+// get first subblock free in block. Return NULL if no block, else first subblock free (mark included), filling size
+static blockmark_box64_t* getFirstBlock_box64(void* block, size_t maxsize, size_t* size, void* start)
+{
+    // get start of block
+    blockmark_box64_t *m = (blockmark_box64_t*)((start)?start:block);
+    while(m->next.x32) {    // while there is a subblock
+        if(!m->next.fill && SIZE_BLOCK_BOX64(m->next)>=maxsize) {
+            *size = SIZE_BLOCK_BOX64(m->next);
+            return m;
+        }
+        m = NEXT_BLOCK_BOX64(m);
+    }
+
+    return NULL;
+}
+
+static size_t getMaxfreeBlock_box64_box64(void* block, size_t block_size, void* start)
+{
+    // get start of block
+    if(start) {
+        blockmark_box64_t *m = (blockmark_box64_t*)start;
+        ssize_t maxsize = 0;
+        while(m->next.x32) {    // while there is a subblock
+            if(!m->next.fill && SIZE_BLOCK_BOX64(m->next)>maxsize) {
+                maxsize = SIZE_BLOCK_BOX64(m->next);
+            }
+            m = NEXT_BLOCK_BOX64(m);
+        }
+        return maxsize;
+    } else {
+        blockmark_box64_t *m = LAST_BLOCK_BOX64(block, block_size); // start with the end
+        ssize_t maxsize = 0;
+        while(m->prev.x32 && (((uintptr_t)block+maxsize)<(uintptr_t)m)) {    // while there is a subblock
+            if(!m->prev.fill && SIZE_BLOCK_BOX64(m->prev)>maxsize) {
+                maxsize = SIZE_BLOCK_BOX64(m->prev);
+            }
+            m = PREV_BLOCK_BOX64(m);
+        }
+        return maxsize;
+    }
+}
+
+#define THRESHOLD_BOX64   (128-1*sizeof(blockmark_box64_t))
+
+static void* allocBlock_box64(void* block, blockmark_box64_t* sub, size_t size, void** pstart)
+{
+    (void)block;
+
+    blockmark_box64_t *s = (blockmark_box64_t*)sub;
+    blockmark_box64_t *n = NEXT_BLOCK_BOX64(s);
+
+    size+=sizeof(blockmark_box64_t); // count current blockmark
+    s->next.fill = 1;
+    // check if a new mark is worth it
+    if(SIZE_BLOCK_BOX64(s->next)>size+2*sizeof(blockmark_box64_t)+THRESHOLD_BOX64) {
+        // create a new mark
+        size_t old_offs = s->next.offs;
+        s->next.offs = size;
+        blockmark_box64_t *m = NEXT_BLOCK_BOX64(s);
+        m->prev.x32 = s->next.x32;
+        m->next.fill = 0;
+        m->next.offs = old_offs - size;
+        n->prev.x32 = m->next.x32;
+        n = m;
+    } else {
+        // just fill the blok
+        n->prev.fill = 1;
+    }
+
+    if(pstart && sub==*pstart) {
+        // get the next free block
+        while(n->next.fill)
+            n = NEXT_BLOCK_BOX64(n);
+        *pstart = (void*)n;
+    }
+    return sub->mark;
+}
+static size_t freeBlock_box64(void *block, size_t bsize, blockmark_box64_t* sub, void** pstart)
+{
+    blockmark_box64_t *m = (blockmark_box64_t*)block;
+    blockmark_box64_t *s = sub;
+    blockmark_box64_t *n = NEXT_BLOCK_BOX64(s);
+    s->next.fill = 0;
+    n->prev.fill = 0;
+    // check if merge with next
+    while (n->next.x32 && !n->next.fill) {
+        blockmark_box64_t *n2 = NEXT_BLOCK_BOX64(n);
+        //remove n
+        s->next.offs += n->next.offs;
+        n2->prev.offs = s->next.offs;
+        n = n2;
+    }
+    // check if merge with previous
+    while (s->prev.x32 && !s->prev.fill) {
+        m = PREV_BLOCK_BOX64(s);
+        // remove s...
+        m->next.offs += s->next.offs;
+        n->prev.offs = m->next.offs;
+        s = m;
+    }
+    if(pstart && (uintptr_t)*pstart>(uintptr_t)s) {
+        *pstart = (void*)s;
+    }
+    // return free size at current block (might be bigger)
+    return SIZE_BLOCK_BOX64(s->next);
+}
+
+
+static size_t roundSize_box64(size_t size)
+{
+    if(!size)
+        return size;
+    size = (size+7)&~7LL;   // 8 bytes align in size
+
+    if(size<THRESHOLD_BOX64)
+        size = THRESHOLD_BOX64;
+
+    return size;
+}
+
+uintptr_t blockstree_box64_start = 0;
+uintptr_t blockstree_box64_end = 0;
+int blockstree_box64_index = 0;
+
+bblocklist_box64_t* findBlock_box64(uintptr_t addr)
+{
+    if(blockstree_box64) {
+        uint32_t i;
+        uintptr_t end;
+        if(rb_get_end(blockstree_box64, addr, &i, &end))
+            return &p_blocks_box64[i];
+    } else {
+        for(int i=0; i<n_blocks_box64; ++i)
+            if((addr>=(uintptr_t)p_blocks_box64[i].block) && (addr<=(uintptr_t)p_blocks_box64[i].block+p_blocks_box64[i].size))
+                return &p_blocks_box64[i];
+    }
+    return NULL;
+}
+void add_blockstree_box64_box64(uintptr_t start, uintptr_t end, int idx)
+{
+    if(!blockstree_box64)
+        return;
+    static int reent = 0;
+    if(reent) {
+        blockstree_box64_start = start;
+        blockstree_box64_end = end;
+        blockstree_box64_index = idx;
+        return;
+    }
+    reent = 1;
+    blockstree_box64_start = blockstree_box64_end = 0;
+    rb_set(blockstree_box64, start, end, idx);
+    while(blockstree_box64_start || blockstree_box64_end) {
+        start = blockstree_box64_start;
+        end = blockstree_box64_end;
+        idx = blockstree_box64_index;
+        blockstree_box64_start = blockstree_box64_end = 0;
+        rb_set(blockstree_box64, start, end, idx);
+    }
+    reent = 0;
+}
+
+void* internal_customMalloc_box64(size_t size, int is32bits)
+{
+    //printf("Size = %lld\n", size);
+    if(size<=64)
+        return map64_customMalloc(size, is32bits);
+    if(size<=128)
+        return map128_customMalloc(size, is32bits);
+    //makeprintf("internal_customMalloc_box64\n");
+    size_t init_size = size;
+    size = roundSize_box64(size);
+    // look for free space
+    blockmark_box64_t* sub = NULL;
+    size_t fullsize = size+2*sizeof(blockmark_box64_t);
+    for(int i=0; i<n_blocks_box64; ++i) {
+        if(p_blocks_box64[i].block && (p_blocks_box64[i].type == BTYPE_LIST) && p_blocks_box64[i].maxfree>=init_size) {
+            size_t rsize = 0;
+            sub = getFirstBlock_box64(p_blocks_box64[i].block, init_size, &rsize, p_blocks_box64[i].first);
+            if(sub) {
+                if(size>rsize)
+                    size = init_size;
+                if(rsize-size<THRESHOLD_BOX64)
+                    size = rsize;
+                void* ret = allocBlock_box64(p_blocks_box64[i].block, sub, size, &p_blocks_box64[i].first);
+                if(rsize==p_blocks_box64[i].maxfree)
+                    p_blocks_box64[i].maxfree = getMaxfreeBlock_box64_box64(p_blocks_box64[i].block, p_blocks_box64[i].size, p_blocks_box64[i].first);
+                return ret;
+            }
+        }
+    }
+    // add a new block
+    int i = n_blocks_box64++;
+    if(n_blocks_box64>c_blocks_box64) {
+        c_blocks_box64 += 8;
+        p_blocks_box64 = (bblocklist_box64_t*)realloc(p_blocks_box64, c_blocks_box64*sizeof(bblocklist_box64_t));
+    }
+    size_t allocsize = (fullsize>MMAPSIZE)?fullsize:MMAPSIZE;
+    allocsize = (allocsize+box64_pagesize-1)&~(box64_pagesize-1);
+    if(is32bits) allocsize = (allocsize+0xffffLL)&~(0xffffLL);
+    p_blocks_box64[i].block = NULL;   // incase there is a re-entrance
+    p_blocks_box64[i].first = NULL;
+    p_blocks_box64[i].size = 0;
+    p_blocks_box64[i].type = BTYPE_LIST;
+    void* p =mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    p_blocks_box64[i].block = p;
+    p_blocks_box64[i].first = p;
+    p_blocks_box64[i].size = allocsize;
+    // setup marks
+    blockmark_box64_t* m = (blockmark_box64_t*)p;
+    m->prev.x32 = 0;
+    m->next.fill = 0;
+    m->next.offs = allocsize-sizeof(blockmark_box64_t);
+    blockmark_box64_t* n = NEXT_BLOCK_BOX64(m);
+    n->next.x32 = 0;
+    n->prev.x32 = m->next.x32;
+    // alloc 1st block
+    void* ret  = allocBlock_box64(p_blocks_box64[i].block, p, size, &p_blocks_box64[i].first);
+    p_blocks_box64[i].maxfree = getMaxfreeBlock_box64_box64(p_blocks_box64[i].block, p_blocks_box64[i].size, p_blocks_box64[i].first);
+    add_blockstree_box64_box64((uintptr_t)p, (uintptr_t)p+allocsize, i);
+    return ret;
+}
+void* customMalloc_box64(size_t size)
+{
+    return internal_customMalloc_box64(size, 0);
+}
+
+void internal_customFree_box64(void* p, int is32bits)
+{
+    if(!p || !inited) {
+        return;
+    }
+    uintptr_t addr = (uintptr_t)p;
+    bblocklist_box64_t* l = findBlock_box64(addr);
+    if(l) {
+        if(l->type==BTYPE_LIST) {
+            blockmark_box64_t* sub = (blockmark_box64_t*)(addr-sizeof(blockmark_box64_t));
+            size_t newfree = freeBlock_box64(l->block, l->size, sub, &l->first);
+            if(l->maxfree < newfree) l->maxfree = newfree;
+            return;
+        } else if(l->type == BTYPE_MAP) {
+            //BTYPE_MAP
+            size_t idx = (addr-(uintptr_t)l->block)>>7;
+            uint8_t* map = l->first;
+            if(map[idx>>3]&(1<<(idx&7))) {
+                map[idx>>3] ^= (1<<(idx&7));
+                l->maxfree += 128;
+            }   // warn if double free?
+            if(l->lowest>idx)
+                l->lowest = idx;
+            return;
+        }else{
+            //BTYPE_MAP
+            size_t idx = (addr-(uintptr_t)l->block)>>6;
+            uint16_t* map = l->first;
+            if(map[idx>>4]&(1<<(idx&15))) {
+                map[idx>>4] ^= (1<<(idx&15));
+                l->maxfree += 64;
+            }   // warn if double free?
+            if(l->lowest>idx)
+                l->lowest = idx;
+            return;
+        }
+    }
+    if(n_blocks_box64) {
+        if(is32bits) {
+            free(p);
+        }
+    }
+}
+void customFree_box64(void* p)
+{
+    internal_customFree_box64(p, 0);
+}
+
+void init_custommem_helper_box64()
+{
+    blockstree_box64 = rbtree_init("blockstree_box64");
+    // if there is some blocks already
+    if(n_blocks_box64)
+        for(int i=0; i<n_blocks_box64; ++i)
+            rb_set(blockstree_box64, (uintptr_t)p_blocks_box64[i].block, (uintptr_t)p_blocks_box64[i].block+p_blocks_box64[i].size, i);
+    n_blocks_box64 = 0;       // number of blocks for custom malloc
+    c_blocks_box64 = 0;  
+}
+
+
+void fini_custommem_helper_box64()
+{
+    rbtree_delete(blockstree_box64);
+    blockstree_box64 = NULL;
+    for(int i=0; i<n_blocks_box64; ++i)
+        munmap(p_blocks_box64[i].block, p_blocks_box64[i].size);
+    free(p_blocks_box64);
+    p_blocks_box64 = NULL;
+    printf("n_blocks_box64 = %d\n", n_blocks_box64);
+    printf("c_blocks_box64 = %d\n", c_blocks_box64);
+    printf("uti = %lld\n", (n_blocks_box64*MMAPSIZE));
+    n_blocks_box64 = 0;       // number of blocks for custom malloc
+    c_blocks_box64 = 0;    
+}
+
 
 
