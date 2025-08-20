@@ -33,7 +33,7 @@ typedef struct blocklist_s {
     rb_t               free_list;
 } blocklist_t;
 
-#define MMAPSIZE (512*1024)     // allocate 512kb sized blocks
+#define MMAPSIZE (512*1024*1024)     // allocate 512kb sized blocks
 #define MMAPSIZE64 (64*2048)   // allocate 128kb sized blocks for 64byte map
 #define MMAPSIZE128 (128*1024)  // allocate 128kb sized blocks for 128byte map
 #define DYNMMAPSZ (2*1024*1024) // allocate 2Mb block for dynarec
@@ -104,7 +104,10 @@ static blockmark_t* getFirstBlock(rb_t* tree, size_t maxsize, size_t* size, void
 static size_t getMaxFreeBlock(rb_t* tree, size_t block_size, void* start)
 {
     rb_node_t* maxfree = rb_get_max(tree);
-    if(!maxfree) return 0;
+    if(!maxfree){
+        printf("rb empty");
+        return 0;
+    }
     blockmark_t *m = container_of(maxfree, blockmark_t, node);
     return SIZE_BLOCK(m->next);
 }
@@ -552,6 +555,7 @@ static size_t getMaxfreeBlock_box64_box64(void* block, size_t block_size, void* 
             }
             m = NEXT_BLOCK_BOX64(m);
         }
+        if(!maxsize) printf("empty");
         return maxsize;
     } else {
         blockmark_box64_t *m = LAST_BLOCK_BOX64(block, block_size); // start with the end
@@ -562,6 +566,7 @@ static size_t getMaxfreeBlock_box64_box64(void* block, size_t block_size, void* 
             }
             m = PREV_BLOCK_BOX64(m);
         }
+        if(!maxsize) printf("empty");
         return maxsize;
     }
 }

@@ -144,7 +144,7 @@ void test_custommem_fixsize()
             customFree(ptr_custoMalloc[index]);
             ptr_custoMalloc[index] = NULL;
         }else if (rand()&1 && !ptr_custoMalloc[index]){ // Allocation benchmark
-            ptr_custoMalloc[index] = customMalloc(56);
+            ptr_custoMalloc[index] = customMalloc(2853);
         }else{
         i-- ;
         }
@@ -152,8 +152,34 @@ void test_custommem_fixsize()
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
 
-    print_timing("customMalloc 56", N, elapsed);
+    print_timing("customMalloc rbtree fix", N, elapsed);
     fini_custommem_helper();
+}
+
+void test_custommem_box64_fixsize()
+{
+    init_custommem_helper_box64();
+    void* ptr_custoMalloc[N];
+    for (int i = 0; i < N; ++i)
+        ptr_custoMalloc[i] = NULL;
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int i = 0; i < N; ++i){
+        int index = rand()%N;
+        if(ptr_custoMalloc[index]){  // Deallocation benchmark
+            customFree_box64(ptr_custoMalloc[index]);
+            ptr_custoMalloc[index] = NULL;
+        }else if (rand()&1 && !ptr_custoMalloc[index]){ // Allocation benchmark
+            ptr_custoMalloc[index] = customMalloc_box64(2853);
+        }else{
+        i-- ;
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    double elapsed = timespec_diff(&start, &end);
+
+    print_timing("customMalloc box64 fix", N, elapsed);
+    fini_custommem_helper_box64();
 }
 
 void test_malloc()
@@ -211,6 +237,8 @@ void test_malloc_fix()
     print_timing("Malloc 56", N, elapsed);
 }
 
+
+
 /*
 An allocator’s throughput, which is defined as the
 number of requests that it completes per unit time. For example, if an alloca-
@@ -228,8 +256,7 @@ int main(){
     test_custommem_rand();
     test_custommem_box64_rand();
     test_custommem_fixsize();
-    test_malloc();
-    test_malloc_fix();
+    test_custommem_box64_fixsize();
     return 0;
 }
 
