@@ -166,7 +166,6 @@ typedef struct {
     rb_node_t *root;   /**< Root node of the tree */
     rb_cmp_t cmp_func; /**< Comparison function for nodes */
     rb_cmp_value_t cmp_func_by_value;
-    rb_cmp_value_t cmp_qual;
 
 #if _RB_DISABLE_ALLOCA != 0
     uint8_t max_depth; /**< Maximum depth (only needed for fixed stack) */

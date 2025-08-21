@@ -4,20 +4,13 @@
 #include <stdlib.h>
 #include <inttypes.h>
 
-#ifdef RBTREE_TEST
+
 #define rbtreeMalloc malloc
 #define rbtreeFree free
-#else
+
 #include "custommem.h"
 #include "rbtree.h"
-#if 0
-#define rbtreeMalloc box_malloc
-#define rbtreeFree box_free
-#else
-#define rbtreeMalloc customMalloc
-#define rbtreeFree customFree
-#endif
-#endif
+
 
 rbtree_t* rbtree_init(const char* name) {
     rbtree_t* tree = rbtreeMalloc(sizeof(rbtree_t));

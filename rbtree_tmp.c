@@ -355,6 +355,7 @@ static void fix_extra_red(rb_node_t **stack, unsigned stacksz)
 
 void rb_insert(rb_t *tree, rb_node_t *node)
 {
+    //printf("rb_insert\n");
     __rb_verify_alignment();
 
     set_child(node, RB_LEFT, NULL);
@@ -685,8 +686,6 @@ rb_node_t* find_best_fit(rb_t *tree, size_t size)
     while(n){
         if(tree->cmp_func_by_value(n, size)){// if the node is less than the input value 
             n = get_child(n, RB_RIGHT);
-        }else if(tree->cmp_qual(n, size)){
-            return n;
         }else{
             next = n;
             n = get_child(n, RB_LEFT);

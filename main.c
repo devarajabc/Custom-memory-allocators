@@ -4,7 +4,7 @@
 #include <mach/mach_time.h>
 #include "custommem.h"
 
-#define N 100000
+#define N 1000000
 
 /*
 Latency: How fast are malloc() / free() / realloc()?
@@ -138,20 +138,12 @@ void test_custommem_fixsize()
         ptr_custoMalloc[i] = NULL;
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int i = 0; i < N; ++i){
-        int index = rand()%N;
-        if(ptr_custoMalloc[index]){  // Deallocation benchmark
-            customFree(ptr_custoMalloc[index]);
-            ptr_custoMalloc[index] = NULL;
-        }else if (rand()&1 && !ptr_custoMalloc[index]){ // Allocation benchmark
-            ptr_custoMalloc[index] = customMalloc(2853);
-        }else{
-        i-- ;
-        }
-    }
+    for (int i = 0; i < N; ++i)
+        ptr_custoMalloc[i] = customMalloc(2853);
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
-
+    for(int i = 0; i < N; i++)
+        customFree(ptr_custoMalloc[i]);
     print_timing("customMalloc rbtree fix", N, elapsed);
     fini_custommem_helper();
 }
@@ -164,19 +156,13 @@ void test_custommem_box64_fixsize()
         ptr_custoMalloc[i] = NULL;
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
-    for (int i = 0; i < N; ++i){
-        int index = rand()%N;
-        if(ptr_custoMalloc[index]){  // Deallocation benchmark
-            customFree_box64(ptr_custoMalloc[index]);
-            ptr_custoMalloc[index] = NULL;
-        }else if (rand()&1 && !ptr_custoMalloc[index]){ // Allocation benchmark
-            ptr_custoMalloc[index] = customMalloc_box64(2853);
-        }else{
-        i-- ;
-        }
-    }
+    for (int i = 0; i < N; ++i)
+        ptr_custoMalloc[i] = customMalloc_box64(2853);
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
+    for(int i = 0; i < N; i++)
+        customFree_box64(ptr_custoMalloc[i]);
+    
 
     print_timing("customMalloc box64 fix", N, elapsed);
     fini_custommem_helper_box64();
@@ -192,18 +178,10 @@ void test_malloc()
     for (int i = 0; i < N; ++i)
         ptr_Malloc[i] = NULL;
     // Deallocation benchmark
-    for (int i = 0; i < N; ++i){
-        int index = rand()%N;
-        if(ptr_Malloc[index]){  // Deallocation benchmark
-            free(ptr_Malloc[index]);
-            ptr_Malloc[index] = NULL;
-        }else if (rand()&1 && !ptr_Malloc[index]){ // Allocation benchmark
-            ptr_Malloc[index] = malloc(rand()%50000+128);
-        }else{
-        i-- ;
-        }
-    }
-    
+    for (int i = 0; i < N; ++i)
+        ptr_Malloc[i] = customMalloc(2853);
+    for(int i = 0; i < N; i++)
+        customFree(ptr_Malloc[i]);
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
 

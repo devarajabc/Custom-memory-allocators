@@ -88,12 +88,42 @@ static bool size_equal(const rb_node_t *a, const size_t size)
     return SIZE_BLOCK(block_a->next) == size;
 }
 
+static size_t block_size(const rb_node_t* n) {
+    const blockmark_t* bm = container_of(n, blockmark_t, node);
+    return SIZE_BLOCK(bm->next); // or whatever holds the free-block size
+}
+
+static blockmark_t* block_node(const rb_node_t* n) {
+    return  container_of(n, blockmark_t, node); 
+}
+
+
+
+static rb_node_t* rb_lower_bound(rb_t* t, size_t need) {
+    if (!t || !t->root || !need)
+        return NULL;
+    rb_node_t *n = t->root, *cand = NULL;
+    while (n) {
+        size_t k = block_size(n);
+        if (k < need) {
+            n = n->children[1];          // right
+        } else {                          // k >= need
+            cand = n;
+            n = n->children[0];          // left
+        }
+    }
+    return cand; // smallest size >= need, or NULL
+}
+
 // get first subblock free in block. Return NULL if no block, else first subblock free (mark included), filling size
 static blockmark_t* getFirstBlock(rb_t* tree, size_t maxsize, size_t* size, void* start)
 {
-   rb_node_t* block = find_best_fit(tree, maxsize); 
+   //printf("tree, maxsize = %d %d\n", tree, maxsize);
+   rb_node_t* block = rb_lower_bound(tree, maxsize); 
+   //rb_node_t* block = find_best_fit(tree, maxsize); 
    if(block){
-        blockmark_t *m = container_of(block, blockmark_t, node);
+        //blockmark_t *m = container_of(block, blockmark_t, node);
+        blockmark_t *m = block_node(block);
         rb_remove(tree, block);
         *size = SIZE_BLOCK(m->next);
         return m;
@@ -105,7 +135,7 @@ static size_t getMaxFreeBlock(rb_t* tree, size_t block_size, void* start)
 {
     rb_node_t* maxfree = rb_get_max(tree);
     if(!maxfree){
-        printf("rb empty");
+        //printf("rb empty\n");
         return 0;
     }
     blockmark_t *m = container_of(maxfree, blockmark_t, node);
@@ -292,8 +322,10 @@ void* map128_customMalloc(size_t size, int is32bits)
 // the bitmap itself is also allocated in that mapping, as a slice of 256bytes, at the end of the mapping (and so marked as allocated)
 void* map64_customMalloc(size_t size, int is32bits)
 {
-    //printf("map64_customMalloc\n");
+    //printf("!!!map64_customMalloc\n");
     size = 64;
+    //int* ptr = NULL;
+    //printf("%d\n", *ptr);
     for(int i = 0; i < n_blocks; ++i) {
         if (p_blocks[i].block
          && p_blocks[i].type == BTYPE_MAP64
@@ -366,8 +398,10 @@ void* internal_customMalloc(size_t size, int is32bits)
     // look for free space
     blockmark_t* sub = NULL;
     size_t fullsize = size+2*sizeof(blockmark_t);
+    //printf("n_block = %d\n", n_blocks);
     for(int i=0; i<n_blocks; ++i) {
         if(p_blocks[i].block && (p_blocks[i].type == BTYPE_LIST) && p_blocks[i].maxfree>=init_size) {
+            //printf("good p_blocks[%d].block \n", i);
             size_t rsize = 0;
             sub = getFirstBlock(&(p_blocks[i].free_list), init_size, &rsize, p_blocks[i].first);
             if(sub) {
@@ -378,12 +412,23 @@ void* internal_customMalloc(size_t size, int is32bits)
                 void* ret = allocBlock(&(p_blocks[i].free_list), sub, size, &p_blocks[i].first);
                 if(rsize==p_blocks[i].maxfree)
                     p_blocks[i].maxfree = getMaxFreeBlock(&(p_blocks[i].free_list), p_blocks[i].size, p_blocks[i].first);
+                    //printf("new free = %lld\n", p_blocks[i].maxfree);
                 return ret;
+            }else{
+                printf("sub is NULL\n");
             }
+        /*
+        }else{
+        printf("p_blocks[%d].maxfree = %d >= init_size = %d\n", i, p_blocks[i].maxfree, init_size);
+        printf("p_blocks[i].block = %llx\n",p_blocks[i].block);
+        printf("p_blocks[i].type == BTYPE_LIST -> %d is %d\n", p_blocks[i].type == BTYPE_LIST, p_blocks[i].type);
+        */
         }
     }
     // add a new block
+    //printf("bb n_block = %d\n", n_blocks);
     int i = n_blocks++;
+    //printf("need new block\n");
     if(n_blocks>c_blocks) {
         c_blocks += 8;
         p_blocks = (blocklist_t*)realloc(p_blocks, c_blocks*sizeof(blocklist_t));
@@ -476,10 +521,8 @@ void init_custommem_helper()
 {
     blockstree = rbtree_init("blockstree");
     if(n_blocks)
-        for(int i=0; i<n_blocks; ++i)
-            rb_set(blockstree, (uintptr_t)p_blocks[i].block, (uintptr_t)p_blocks[i].block+p_blocks[i].size, i);
-    n_blocks = 0;       // number of blocks for custom malloc
-    c_blocks = 0;    
+        printf("error\n");
+    //printf("start!\n");
 }
 
 
@@ -555,7 +598,6 @@ static size_t getMaxfreeBlock_box64_box64(void* block, size_t block_size, void* 
             }
             m = NEXT_BLOCK_BOX64(m);
         }
-        if(!maxsize) printf("empty");
         return maxsize;
     } else {
         blockmark_box64_t *m = LAST_BLOCK_BOX64(block, block_size); // start with the end
@@ -566,7 +608,6 @@ static size_t getMaxfreeBlock_box64_box64(void* block, size_t block_size, void* 
             }
             m = PREV_BLOCK_BOX64(m);
         }
-        if(!maxsize) printf("empty");
         return maxsize;
     }
 }
@@ -716,6 +757,7 @@ void* internal_customMalloc_box64(size_t size, int is32bits)
                 void* ret = allocBlock_box64(p_blocks_box64[i].block, sub, size, &p_blocks_box64[i].first);
                 if(rsize==p_blocks_box64[i].maxfree)
                     p_blocks_box64[i].maxfree = getMaxfreeBlock_box64_box64(p_blocks_box64[i].block, p_blocks_box64[i].size, p_blocks_box64[i].first);
+                //printf("box new free = %lld\n", p_blocks_box64[i].maxfree);
                 return ret;
             }
         }
