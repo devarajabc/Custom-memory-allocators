@@ -86,7 +86,7 @@ typedef enum { RB_RED = 0, RB_BLACK = 1 } rb_color_t;
  * For right children, returns the pointer directly. For left children,
  * masks out the color bit (LSB) to retrieve the actual pointer value.
  */
-static inline rb_node_t *get_child(rb_node_t *n, rb_side_t side)
+rb_node_t *get_child(rb_node_t *n, rb_side_t side)
 {
     if (side == RB_RIGHT)
         return n->children[RB_RIGHT];
@@ -182,6 +182,7 @@ static unsigned find_and_stack(rb_t *tree, rb_node_t *node, rb_node_t **stack)
 {
     unsigned sz = 0;
     stack[sz++] = tree->root;
+    printf("root is %lld\n", tree->root);
 
     /* Traverse the tree, comparing the current node with the target node.
      * Determine the direction based on the comparison function:
@@ -314,7 +315,15 @@ static void fix_extra_red(rb_node_t **stack, unsigned stacksz)
         /* If the parent is black, the tree is already balanced. */
         if (likely(is_black(parent)))
             return;
-
+        //Case 0: The parent is red. Recolor and return. 
+        if(stacksz < 3){
+            printf("stack[stacksz - 1] = %lld\n", stack[stacksz - 1]);
+            printf("stack[stacksz - 2] = %lld\n", stack[stacksz - 2]);   
+        }
+        if(node == parent) {
+            printf("error !!\n");
+            printf("stacksz = %d stacksz - 3 = %d\n",stacksz, stacksz - 3);
+        }
         rb_node_t *grandparent = stack[stacksz - 3];
         rb_side_t side = get_side(grandparent, parent);
         rb_node_t *aunt =
@@ -355,11 +364,12 @@ static void fix_extra_red(rb_node_t **stack, unsigned stacksz)
 
 void rb_insert(rb_t *tree, rb_node_t *node)
 {
-    //printf("rb_insert\n");
+    printf("rb_insert %lld\n", node);
     __rb_verify_alignment();
 
     set_child(node, RB_LEFT, NULL);
     set_child(node, RB_RIGHT, NULL);
+    tree->count++;
 
     /* If the tree is empty, set the new node as the root and color it black. */
     if (unlikely(!tree->root)) {
@@ -393,6 +403,7 @@ void rb_insert(rb_t *tree, rb_node_t *node)
 
     /* Push the new node onto the stack and fix any red-red violations. */
     stack[stacksz++] = node;
+    //printf("fix_extra_red(%d, %d);\n",stack, stacksz);
     fix_extra_red(stack, stacksz);
 
     /* Update the maximum depth of the tree if necessary. */
@@ -530,6 +541,8 @@ static void fix_missing_black(rb_node_t **stack,
 void rb_remove(rb_t *tree, rb_node_t *node)
 {
     __rb_verify_alignment();
+    //printf("rb_reomve\n");
+    
 
     rb_node_t *tmp;
 
@@ -545,8 +558,11 @@ void rb_remove(rb_t *tree, rb_node_t *node)
     unsigned stacksz = find_and_stack(tree, node, stack);
 
     /* Node not found in the tree; return. */
-    if (node != stack[stacksz - 1])
-        return;
+    if (node != stack[stacksz - 1]){
+        printf("Not found ");
+            return;
+    }
+    tree->count--;
 
     /* Case 1: Node has two children. Swap with the in-order predecessor. */
     if (get_child(node, RB_LEFT) && get_child(node, RB_RIGHT)) {
@@ -677,24 +693,6 @@ bool rb_contains(rb_t *tree, rb_node_t *node)
     return n == node;
 }
 
-rb_node_t* find_best_fit(rb_t *tree, size_t size)
-{
-    if (unlikely(!tree || !tree->root || !size))
-        return NULL;
-    rb_node_t *n = tree->root;
-    rb_node_t *next = NULL;
-    while(n){
-        if(tree->cmp_func_by_value(n, size)){// if the node is less than the input value 
-            n = get_child(n, RB_RIGHT);
-        }else{
-            next = n;
-            n = get_child(n, RB_LEFT);
-        }
-
-    }
-    //printf("bigger fit\n");
-    return next;
-}
 
 /* The "foreach" traversal uses a dynamic stack allocated with alloca(3) or
  * pre-allocated temporary space.

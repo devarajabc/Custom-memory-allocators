@@ -10,7 +10,6 @@
 
 int box64_pagesize = 4096;
 int have48bits = 0;
-static int inited = 0;
 typedef enum {
     MEM_UNUSED = 0,
     MEM_ALLOCATED = 1,
@@ -33,7 +32,7 @@ typedef struct blocklist_s {
     rb_t               free_list;
 } blocklist_t;
 
-#define MMAPSIZE (512*1024*1024)     // allocate 512kb sized blocks
+#define MMAPSIZE (512*1024*512)     // allocate 512kb sized blocks
 #define MMAPSIZE64 (64*2048)   // allocate 128kb sized blocks for 64byte map
 #define MMAPSIZE128 (128*1024)  // allocate 128kb sized blocks for 128byte map
 #define DYNMMAPSZ (2*1024*1024) // allocate 2Mb block for dynarec
@@ -61,24 +60,24 @@ typedef struct blockmark_s {
 #define PREV_BLOCK(b) (blockmark_t*)(((uintptr_t)(b) - (b)->prev.offs))
 #define LAST_BLOCK(b, s) (blockmark_t*)(((uintptr_t)(b)+(s))-sizeof(blockmark_t))
 #define SIZE_BLOCK(b) (((ssize_t)b.offs)-sizeof(blockmark_t))
-
+void rb_block_check(void* block, rb_t* tree);
 static bool block_lessthan(const rb_node_t *a, const rb_node_t *b)
 {
-    if (!a || !b)
-        return false;
     const blockmark_t *block_a = container_of(a, blockmark_t, node);
     const blockmark_t *block_b = container_of(b, blockmark_t, node);
+    if(SIZE_BLOCK(block_a->next) == SIZE_BLOCK(block_b->next))
+        return block_a->mark < block_b->mark;
     return SIZE_BLOCK(block_a->next) < SIZE_BLOCK(block_b->next);
 }
 
 // return true if the size of the block is less than the input size
-static bool size_lessthan(const rb_node_t *a, const size_t size)
+/*static bool size_lessthan(const rb_node_t *a, const size_t size)
 {
     if (!a || !size)
         return false;
     const blockmark_t *block_a = container_of(a, blockmark_t, node);
     return SIZE_BLOCK(block_a->next) < size;
-}
+}*/
 
 static bool size_equal(const rb_node_t *a, const size_t size)
 {
@@ -96,36 +95,57 @@ static size_t block_size(const rb_node_t* n) {
 static blockmark_t* block_node(const rb_node_t* n) {
     return  container_of(n, blockmark_t, node); 
 }
-
-
-
+ 
 static rb_node_t* rb_lower_bound(rb_t* t, size_t need) {
     if (!t || !t->root || !need)
         return NULL;
     rb_node_t *n = t->root, *cand = NULL;
+    if (block_size(n) == need) return n;
+    int i = 0;
     while (n) {
         size_t k = block_size(n);
         if (k < need) {
-            n = n->children[1];          // right
+            n = get_child(n, RB_RIGHT);         // right
         } else {                          // k >= need
             cand = n;
-            n = n->children[0];          // left
+            n = get_child(n, RB_LEFT);        // left
         }
     }
     return cand; // smallest size >= need, or NULL
 }
 
+//getFirstBlock(&(p_blocks[i].free_list), init_size, &rsize, p_blocks[i].first);
 // get first subblock free in block. Return NULL if no block, else first subblock free (mark included), filling size
 static blockmark_t* getFirstBlock(rb_t* tree, size_t maxsize, size_t* size, void* start)
 {
-   //printf("tree, maxsize = %d %d\n", tree, maxsize);
+    //blocklist_t* p_block = container_of(tree, blocklist_t, free_list);
+    /*if (tree->count < 32){
+        blockmark_t *m = (blockmark_t*)((start)?start:pblock->block);
+        while(m->next.x32) {    // while there is a subblock
+            if(!m->next.fill && SIZE_BLOCK(m->next)>=maxsize) {
+                printf("haha\n");
+                *size = SIZE_BLOCK(m->next);
+                return m;
+            }
+            m = NEXT_BLOCK(m);
+        }
+        printf("nnn %d \n", pblock);
+        return NULL;
+    }else{
+  
+    
+    */
    rb_node_t* block = rb_lower_bound(tree, maxsize); 
-   //rb_node_t* block = find_best_fit(tree, maxsize); 
    if(block){
         //blockmark_t *m = container_of(block, blockmark_t, node);
         blockmark_t *m = block_node(block);
         rb_remove(tree, block);
         *size = SIZE_BLOCK(m->next);
+        /*
+        printf("getFirstBlock: \n");
+        printf("rbn_remove %d \n", SIZE_BLOCK(m->next));
+        printf("node = %d maxsize = %d lower_bound = %d\n", tree->count, maxsize,*size);
+        */
         return m;
    }
    return NULL;
@@ -133,12 +153,14 @@ static blockmark_t* getFirstBlock(rb_t* tree, size_t maxsize, size_t* size, void
 
 static size_t getMaxFreeBlock(rb_t* tree, size_t block_size, void* start)
 {
+    
     rb_node_t* maxfree = rb_get_max(tree);
     if(!maxfree){
-        //printf("rb empty\n");
+        //printf("getmax is NULL \n");
         return 0;
     }
     blockmark_t *m = container_of(maxfree, blockmark_t, node);
+    //printf("getmax %d\n", SIZE_BLOCK(m->next));
     return SIZE_BLOCK(m->next);
 }
 
@@ -146,12 +168,14 @@ static size_t getMaxFreeBlock(rb_t* tree, size_t block_size, void* start)
 
 static void* allocBlock(rb_t* tree, blockmark_t* sub, size_t size, void** pstart)
 {
+   //printf("allocBlock %d ",size);
     blockmark_t *s = (blockmark_t*)sub;
     blockmark_t *n = NEXT_BLOCK(s);
     size+=sizeof(blockmark_t); // count current blockmark
     s->next.fill = 1;
     // check if a new mark is worth it
     if(SIZE_BLOCK(s->next)>size+2*sizeof(blockmark_t)+THRESHOLD) {
+        //printf("block size %d ", SIZE_BLOCK(s->next));
         size_t old_offs = s->next.offs;
         s->next.offs = size;
         blockmark_t *m = NEXT_BLOCK(s);
@@ -160,6 +184,7 @@ static void* allocBlock(rb_t* tree, blockmark_t* sub, size_t size, void** pstart
         m->next.offs = old_offs - size;
         n->prev.x32 = m->next.x32;
         rb_insert(tree, &(m->node));
+        //printf("insert free %d \n", SIZE_BLOCK(m->next));
         n = m;
     } else {
         // just fill the blok
@@ -174,9 +199,10 @@ static void* allocBlock(rb_t* tree, blockmark_t* sub, size_t size, void** pstart
     }
     return sub->mark;
 }
+/*freeBlock(&(l->free_list), l->size, sub, &l->first);*/
 static size_t freeBlock(rb_t *tree, size_t bsize, blockmark_t* sub, void** pstart)
 {
-
+    printf("freeBlock \n");
     blockmark_t *m;
     blockmark_t *s = sub;
     blockmark_t *n = NEXT_BLOCK(s);
@@ -185,26 +211,29 @@ static size_t freeBlock(rb_t *tree, size_t bsize, blockmark_t* sub, void** pstar
     // check if merge with next
     while (n->next.x32 && !n->next.fill) {
         blockmark_t *n2 = NEXT_BLOCK(n);
-        //remove n
         s->next.offs += n->next.offs;
         n2->prev.offs = s->next.offs;
         rb_remove(tree, &(n->node));
+        printf("remove n... \n");
         n = n2;
     }
     // check if merge with previous
     while (s->prev.x32 && !s->prev.fill) {
         m = PREV_BLOCK(s);
-        // remove s...
-        m->next.offs += s->next.offs;
+        m->next.offs += s->next.offs;// ??
         n->prev.offs = m->next.offs;
         rb_remove(tree, &(s->node));
+        printf("remove s... %d\n", SIZE_BLOCK(s->next));
         s = m;
     }
-    rb_insert(tree, &(m->node));
+    printf("insert s %lld\n", SIZE_BLOCK(s->next));
+    rb_insert(tree, &(s->node));
+    
     if(pstart && (uintptr_t)*pstart>(uintptr_t)s) {
         *pstart = (void*)s;
     }
     // return free size at current block (might be bigger)
+    printf("node count = %d\n", tree->count);
     return SIZE_BLOCK(s->next);
 }
 
@@ -322,7 +351,7 @@ void* map128_customMalloc(size_t size, int is32bits)
 // the bitmap itself is also allocated in that mapping, as a slice of 256bytes, at the end of the mapping (and so marked as allocated)
 void* map64_customMalloc(size_t size, int is32bits)
 {
-    //printf("!!!map64_customMalloc\n");
+    printf("!!!map64_customMalloc\n");
     size = 64;
     //int* ptr = NULL;
     //printf("%d\n", *ptr);
@@ -393,6 +422,7 @@ void* internal_customMalloc(size_t size, int is32bits)
     if(size<=128)
         return map128_customMalloc(size, is32bits);
     //makeprintf("internal_customMalloc\n");
+    //check
     size_t init_size = size;
     size = roundSize(size);
     // look for free space
@@ -412,18 +442,19 @@ void* internal_customMalloc(size_t size, int is32bits)
                 void* ret = allocBlock(&(p_blocks[i].free_list), sub, size, &p_blocks[i].first);
                 if(rsize==p_blocks[i].maxfree)
                     p_blocks[i].maxfree = getMaxFreeBlock(&(p_blocks[i].free_list), p_blocks[i].size, p_blocks[i].first);
-                    //printf("new free = %lld\n", p_blocks[i].maxfree);
                 return ret;
-            }else{
+            }/*else{
                 printf("sub is NULL\n");
+                printf("p_blocks[%d].maxfree = %d >= init_size = %d\n", i, p_blocks[i].maxfree, init_size);
             }
-        /*
+
         }else{
         printf("p_blocks[%d].maxfree = %d >= init_size = %d\n", i, p_blocks[i].maxfree, init_size);
         printf("p_blocks[i].block = %llx\n",p_blocks[i].block);
         printf("p_blocks[i].type == BTYPE_LIST -> %d is %d\n", p_blocks[i].type == BTYPE_LIST, p_blocks[i].type);
-        */
+        }*/
         }
+        rb_block_check(p_blocks[i].block, &(p_blocks[i].free_list));
     }
     // add a new block
     //printf("bb n_block = %d\n", n_blocks);
@@ -447,9 +478,9 @@ void* internal_customMalloc(size_t size, int is32bits)
     // set up tree
     p_blocks[i].free_list.root = NULL;
     p_blocks[i].free_list.cmp_func = block_lessthan;
-    p_blocks[i].free_list.cmp_func_by_value = size_lessthan;
-    p_blocks[i].free_list.cmp_qual = size_equal;
-
+    //p_blocks[i].free_list.cmp_func_by_value = size_lessthan;
+    p_blocks[i].free_list.count = 0;
+    
     // setup marks
     blockmark_t* m = (blockmark_t*)p;
     m->prev.x32 = 0;
@@ -471,11 +502,12 @@ void* customMalloc(size_t size)
 
 void internal_customFree(void* p, int is32bits)
 {
-    if(!p || !inited) {
+    if(!p) {
         return;
     }
     uintptr_t addr = (uintptr_t)p;
     blocklist_t* l = findBlock(addr);
+    //printf(" l = %lld\n", l);
     if(l) {
         if(l->type==BTYPE_LIST) {
             blockmark_t* sub = (blockmark_t*)(addr-sizeof(blockmark_t));
@@ -571,6 +603,7 @@ typedef struct blockmark_box64_s {
 #define SIZE_BLOCK_BOX64(b) (((ssize_t)b.offs)-sizeof(blockmark_box64_t))
 
 // get first subblock free in block. Return NULL if no block, else first subblock free (mark included), filling size
+//sub = getFirstBlock_box64(p_blocks_box64[i].block, init_size, &rsize, p_blocks_box64[i].first);
 static blockmark_box64_t* getFirstBlock_box64(void* block, size_t maxsize, size_t* size, void* start)
 {
     // get start of block
@@ -800,7 +833,8 @@ void* customMalloc_box64(size_t size)
 
 void internal_customFree_box64(void* p, int is32bits)
 {
-    if(!p || !inited) {
+    //printf("internal_customFree_box64\n");
+    if(!p) {
         return;
     }
     uintptr_t addr = (uintptr_t)p;
@@ -874,4 +908,13 @@ void fini_custommem_helper_box64()
 }
 
 
+void rb_block_check(void* block, rb_t* tree)
+{
+    blockmark_t *m = (blockmark_t*)block;
+    while(m->next.x32) {    // while there is a subblock
+        if(!m->next.fill && !  rb_contains(tree, &(m->node)))
+            printf("error, Didn't contain %lld\n ", SIZE_BLOCK(m->next)); 
+        m = NEXT_BLOCK(m);
+    }
+}
 
