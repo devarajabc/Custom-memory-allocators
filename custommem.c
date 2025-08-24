@@ -32,7 +32,7 @@ typedef struct blocklist_s {
     rb_t               free_list;
 } blocklist_t;
 
-#define MMAPSIZE (512*1024*1024)     // allocate 512kb sized blocks
+#define MMAPSIZE (512*1024*256)     // allocate 512kb sized blocks
 #define MMAPSIZE64 (64*2048)   // allocate 128kb sized blocks for 64byte map
 #define MMAPSIZE128 (128*1024)  // allocate 128kb sized blocks for 128byte map
 #define DYNMMAPSZ (2*1024*1024) // allocate 2Mb block for dynarec
