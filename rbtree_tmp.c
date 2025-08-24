@@ -182,7 +182,7 @@ static unsigned find_and_stack(rb_t *tree, rb_node_t *node, rb_node_t **stack)
 {
     unsigned sz = 0;
     stack[sz++] = tree->root;
-    printf("root is %lld\n", tree->root);
+    //printf("root is %lld\n", tree->root);
 
     /* Traverse the tree, comparing the current node with the target node.
      * Determine the direction based on the comparison function:
@@ -316,14 +316,15 @@ static void fix_extra_red(rb_node_t **stack, unsigned stacksz)
         if (likely(is_black(parent)))
             return;
         //Case 0: The parent is red. Recolor and return. 
-        if(stacksz < 3){
-            printf("stack[stacksz - 1] = %lld\n", stack[stacksz - 1]);
-            printf("stack[stacksz - 2] = %lld\n", stack[stacksz - 2]);   
-        }
-        if(node == parent) {
+        /*if(node == parent) {
+            printf("=====================\n");
             printf("error !!\n");
             printf("stacksz = %d stacksz - 3 = %d\n",stacksz, stacksz - 3);
-        }
+            printf("stack[stacksz - 1] = %lld\n", stack[stacksz - 1]);
+            printf("stack[stacksz - 2] = %lld\n", stack[stacksz - 2]);  
+            printf("root = %lld\n", stack[0]); 
+            printf("===========^^^^^==========\n");
+        }*/
         rb_node_t *grandparent = stack[stacksz - 3];
         rb_side_t side = get_side(grandparent, parent);
         rb_node_t *aunt =
@@ -364,7 +365,7 @@ static void fix_extra_red(rb_node_t **stack, unsigned stacksz)
 
 void rb_insert(rb_t *tree, rb_node_t *node)
 {
-    printf("rb_insert %lld\n", node);
+    //printf("rb_insert 0x%llx\n", node);
     __rb_verify_alignment();
 
     set_child(node, RB_LEFT, NULL);
@@ -559,10 +560,11 @@ void rb_remove(rb_t *tree, rb_node_t *node)
 
     /* Node not found in the tree; return. */
     if (node != stack[stacksz - 1]){
-        printf("Not found ");
+        //printf("Miss 0x%llx \n ", node);
             return;
     }
     tree->count--;
+    //printf("rb_remove 0x%llx\n", node);
 
     /* Case 1: Node has two children. Swap with the in-order predecessor. */
     if (get_child(node, RB_LEFT) && get_child(node, RB_RIGHT)) {
@@ -663,6 +665,7 @@ void rb_remove(rb_t *tree, rb_node_t *node)
         set_child(parent, get_side(parent, node), child);
 
         /* If either the node or child is red, recolor the child to black. */
+        if(!child) printf("error!\n");
         if (is_red(node) || is_red(child))
             set_black(child);
     }

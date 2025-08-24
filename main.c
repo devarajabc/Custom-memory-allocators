@@ -4,7 +4,7 @@
 #include <mach/mach_time.h>
 #include "custommem.h"
 
-#define N 100000
+#define N 10000
 
 /*
 Latency: How fast are malloc() / free() / realloc()?
@@ -12,8 +12,6 @@ Latency: How fast are malloc() / free() / realloc()?
 Throughput: How many allocations per second?
 
 Fragmentation: How much memory is wasted?
-
-
 */
 
 /* Timing utilities */
