@@ -32,7 +32,7 @@ typedef struct blocklist_s {
     rb_t               free_list;
 } blocklist_t;
 
-#define MMAPSIZE (512*1024*512)     // allocate 512kb sized blocks
+#define MMAPSIZE (512*1024*1024)     // allocate 512kb sized blocks
 #define MMAPSIZE64 (64*2048)   // allocate 128kb sized blocks for 64byte map
 #define MMAPSIZE128 (128*1024)  // allocate 128kb sized blocks for 128byte map
 #define DYNMMAPSZ (2*1024*1024) // allocate 2Mb block for dynarec
@@ -138,6 +138,7 @@ static blockmark_t* getFirstBlock(rb_t* tree, size_t maxsize, size_t* size, void
    rb_node_t* block = rb_lower_bound(tree, maxsize); 
    if(block){
         //blockmark_t *m = container_of(block, blockmark_t, node);
+        //printf("getFirstBlock: ");
         blockmark_t *m = block_node(block);
         rb_remove(tree, block);
         *size = SIZE_BLOCK(m->next);
@@ -168,7 +169,7 @@ static size_t getMaxFreeBlock(rb_t* tree, size_t block_size, void* start)
 
 static void* allocBlock(rb_t* tree, blockmark_t* sub, size_t size, void** pstart)
 {
-   //printf("allocBlock %d ",size);
+    //printf("allocBlock ");
     blockmark_t *s = (blockmark_t*)sub;
     blockmark_t *n = NEXT_BLOCK(s);
     size+=sizeof(blockmark_t); // count current blockmark
@@ -183,6 +184,8 @@ static void* allocBlock(rb_t* tree, blockmark_t* sub, size_t size, void** pstart
         m->next.fill = 0;
         m->next.offs = old_offs - size;
         n->prev.x32 = m->next.x32;
+        // memset(&test_nodes[i].node, 0, sizeof(rb_node_t));
+        //memset(&(m->node), 0, sizeof(rb_node_t));
         rb_insert(tree, &(m->node));
         //printf("insert free %d \n", SIZE_BLOCK(m->next));
         n = m;
@@ -202,9 +205,13 @@ static void* allocBlock(rb_t* tree, blockmark_t* sub, size_t size, void** pstart
 /*freeBlock(&(l->free_list), l->size, sub, &l->first);*/
 static size_t freeBlock(rb_t *tree, size_t bsize, blockmark_t* sub, void** pstart)
 {
-    printf("freeBlock \n");
+    /*
+    
+    */
+    //printf("freeBlock ");
     blockmark_t *m;
     blockmark_t *s = sub;
+    //printf("s->node = 0x%llx ", &(s->node));
     blockmark_t *n = NEXT_BLOCK(s);
     s->next.fill = 0;
     n->prev.fill = 0;
@@ -213,27 +220,33 @@ static size_t freeBlock(rb_t *tree, size_t bsize, blockmark_t* sub, void** pstar
         blockmark_t *n2 = NEXT_BLOCK(n);
         s->next.offs += n->next.offs;
         n2->prev.offs = s->next.offs;
+        //printf("remove n... ");
         rb_remove(tree, &(n->node));
-        printf("remove n... \n");
         n = n2;
     }
     // check if merge with previous
     while (s->prev.x32 && !s->prev.fill) {
         m = PREV_BLOCK(s);
-        m->next.offs += s->next.offs;// ??
+        rb_remove(tree, &(m->node));
+        m->next.offs += s->next.offs;
         n->prev.offs = m->next.offs;
-        rb_remove(tree, &(s->node));
-        printf("remove s... %d\n", SIZE_BLOCK(s->next));
+        //printf("remove s... ");
         s = m;
     }
-    printf("insert s %lld\n", SIZE_BLOCK(s->next));
+    /*
+    There s->prev.fill => should not added to the red black tree
+    */
+    //printf("insert s %lld\n", SIZE_BLOCK(s->next));
+    /*if(rb_contains(tree, &(s->node))){
+        printf(" dd 0x%llx ",&(s->node) );
+    }*/
     rb_insert(tree, &(s->node));
     
     if(pstart && (uintptr_t)*pstart>(uintptr_t)s) {
         *pstart = (void*)s;
     }
     // return free size at current block (might be bigger)
-    printf("node count = %d\n", tree->count);
+    //printf("node count = %d\n", tree->count);
     return SIZE_BLOCK(s->next);
 }
 
@@ -476,6 +489,7 @@ void* internal_customMalloc(size_t size, int is32bits)
     p_blocks[i].first = p;
     p_blocks[i].size = allocsize;
     // set up tree
+    memset(&(p_blocks[i].free_list), 0, sizeof(rb_t));
     p_blocks[i].free_list.root = NULL;
     p_blocks[i].free_list.cmp_func = block_lessthan;
     //p_blocks[i].free_list.cmp_func_by_value = size_lessthan;

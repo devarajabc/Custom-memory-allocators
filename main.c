@@ -4,7 +4,7 @@
 #include <mach/mach_time.h>
 #include "custommem.h"
 
-#define N 100
+#define N 100000
 
 /*
 Latency: How fast are malloc() / free() / realloc()?
@@ -139,6 +139,7 @@ void test_custommem_fixsize()
     for(int i = 0; i < N; i+=2){
         //printf("ptr i = %d ", i);
         customFree(ptr_custoMalloc[i]);
+        ptr_custoMalloc[i] = NULL;
     }
     struct timespec start, end;
 
@@ -149,14 +150,16 @@ void test_custommem_fixsize()
         real_ptr_custoMalloc[i] = customMalloc(2853);
     }
     for(int i = 0; i < N; i++){
-         printf("real_ptr i = %d ", i);
+        //printf("real_ptr i = %d ", i);
         customFree(real_ptr_custoMalloc[i]);
+        real_ptr_custoMalloc[i] = NULL;
+
     }
     
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
     for(int i = 0; i < N; i++){
-         printf("ptr i = %d ", i);
+        //printf("ptr i = %d ", i);
         if(ptr_custoMalloc[i])customFree(ptr_custoMalloc[i]);
     }
     print_timing("customMalloc rbtree fix", N, elapsed);
@@ -169,8 +172,11 @@ void test_custommem_box64_fixsize()
     void* ptr_custoMalloc[N];
     for (int i = 0; i < N; i++)
         ptr_custoMalloc[i] = customMalloc_box64(rand()%2853+129);
-    for(int i = 0; i < N; i+=2)
+    for(int i = 0; i < N; i+=2){
         customFree_box64(ptr_custoMalloc[i]);
+        ptr_custoMalloc[i] = NULL;
+
+    }
    
     struct timespec start, end;
     void* real_ptr_custoMalloc[N];
@@ -178,15 +184,19 @@ void test_custommem_box64_fixsize()
     for (int i = 0; i < N; i++)
         real_ptr_custoMalloc[i] = customMalloc_box64(2853);
     
-   
-    for(int i = 0; i < N; i++)
+    for(int i = 0; i < N; i++){
         customFree_box64(real_ptr_custoMalloc[i]);
+        real_ptr_custoMalloc[i] = NULL;
+
+    }
     
         clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
 
     for(int i = 0; i < N; i++){
         if(ptr_custoMalloc[i])customFree_box64(ptr_custoMalloc[i]);
+        ptr_custoMalloc[i] = NULL;
+
     }
     print_timing("customMalloc box64 fix", N, elapsed);
     fini_custommem_helper_box64();
@@ -318,7 +328,7 @@ int main(){
     //test_custommem_rand();
     //test_custommem_box64_rand();
     test_custommem_fixsize();
-    //test_custommem_box64_fixsize();
+    test_custommem_box64_fixsize();
     //test_custommem_mixed();
     return 0;
 }
