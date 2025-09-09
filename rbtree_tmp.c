@@ -541,9 +541,7 @@ static void fix_missing_black(rb_node_t **stack,
 
 void rb_remove(rb_t *tree, rb_node_t *node)
 {
-    __rb_verify_alignment();
-    //printf("rb_reomve\n");
-    
+    __rb_verify_alignment();    
 
     rb_node_t *tmp;
 

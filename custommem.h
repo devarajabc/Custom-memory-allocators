@@ -4,7 +4,8 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "rbtree_tmp.h"
-#define MMAPSIZE (512*1024*1024)     // allocate 512kb sized blocks
+#define MMAPSIZE_RB (512*1024*512)     // allocate 512kb sized blocks
+#define MMAPSIZE (512*1024)   
 
 void* customMalloc(size_t size);
 void* customMalloc_box64(size_t size);
@@ -23,10 +24,12 @@ typedef union mark_s {
     uint32_t            x32;
 } mark_t;
 typedef struct blockmark_s {
-    rb_node_t node;
     mark_t  prev;
     mark_t  next;
-    uint8_t mark[];
+    //union {
+        rb_node_t node;
+        uint8_t mark[];
+    //};
 } blockmark_t;
 
 typedef struct blockmark_box64_s {

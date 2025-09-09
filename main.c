@@ -4,7 +4,7 @@
 #include <mach/mach_time.h>
 #include "custommem.h"
 
-#define N 20000
+#define N 6000
 
 /*
 Latency: How fast are malloc() / free() / realloc()?
@@ -28,31 +28,13 @@ static void print_timing(const char *operation, int count, double elapsed)
            count, elapsed, elapsed / count * 1e6, count / elapsed);
 }
 
-static void get_peak_rss_kb(void) {
-    /* Memory usage statistics */
-        struct rusage usage;
-        if (getrusage(RUSAGE_SELF, &usage) == 0) {
-#ifdef __APPLE__
-            /* On macOS, ru_maxrss is in bytes */
-            printf("Max RSS: %.2f MB\n",
-                   (double) usage.ru_maxrss / (1024 * 1024));
-            printf("Memory Utilization: ~%.3f %%\n", (double) (N*2853)/usage.ru_maxrss);
-#else
-            /* On Linux, ru_maxrss is in kilobytes */
-            printf("Max RSS: %lu KB\n", usage.ru_maxrss);
-            //printf("Memory per node: ~%.2f bytes\n",
-                   //(double) usage.ru_maxrss * 1024 / count);
-#endif
-        }
-}
-
-void test_custommem_fixsize(int frag)
+void test_custommem(int frag)
 {
     long long pre_size = 0;
     init_custommem_helper();
     void* ptr_custoMalloc[N];
     for (int i = 0; i < N; i++){
-        size_t size = rand()%300+2853;
+        size_t size = rand()%1500+2853;
         ptr_custoMalloc[i] = customMalloc(size);
         pre_size += size;
     }
@@ -66,13 +48,11 @@ void test_custommem_fixsize(int frag)
     void* real_ptr_custoMalloc[N];
     clock_gettime(CLOCK_MONOTONIC, &start);
     for (int i = 0; i < N; i++){
-        real_ptr_custoMalloc[i] = customMalloc(2853);
+        real_ptr_custoMalloc[i] = customMalloc(rand()%1500+2853);
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
     print_timing("customMalloc rbtree", N, elapsed);
-    get_peak_rss_kb();
-
 
     clock_gettime(CLOCK_MONOTONIC, &start);
     for(int i = 0; i < N; i++){
@@ -89,18 +69,17 @@ void test_custommem_fixsize(int frag)
         //printf("ptr i = %d ", i);
         if(ptr_custoMalloc[i])customFree(ptr_custoMalloc[i]);
     }
-    print_timing("customMalloc rbtree fix", N, elapsed);
     printf("Shallow Size = %lld\n",N*(2583+sizeof(blockmark_t))+pre_size);
     fini_custommem_helper();
 }
 
-void test_custommem_box64_fixsize(int frag)
+void test_custommem_box64(int frag)
 {
     long long pre_size = 0;
     init_custommem_helper_box64();
     void* ptr_custoMalloc[N];
     for (int i = 0; i < N; i++){
-        size_t size = rand()%300+2853;
+        size_t size = rand()%1500+2853;
         ptr_custoMalloc[i] = customMalloc_box64(size);
         pre_size += size;
     }
@@ -114,11 +93,11 @@ void test_custommem_box64_fixsize(int frag)
     void* real_ptr_custoMalloc[N];
     clock_gettime(CLOCK_MONOTONIC, &start);
     for (int i = 0; i < N; i++)
-        real_ptr_custoMalloc[i] = customMalloc_box64(2853);
+        real_ptr_custoMalloc[i] = customMalloc_box64(rand()%1500+2853);
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed = timespec_diff(&start, &end);
     print_timing("customMalloc box64", N, elapsed);
-    get_peak_rss_kb();
+
     clock_gettime(CLOCK_MONOTONIC, &start);
     for(int i = 0; i < N; i++){
         customFree_box64(real_ptr_custoMalloc[i]);
@@ -154,9 +133,8 @@ void test_mixed(int frag)
 {
     printf("\nPrepared for allocator perf test under heavy fragmentation... \n(free every %d block in list A, then allocate all blocks in list B from the same pool)\n", frag);
     printf("Test Times: %lld \n", N);
-    printf("MMAPSIZE: %lld\n", MMAPSIZE);
-    test_custommem_fixsize(frag);
-    test_custommem_box64_fixsize(frag);
+    test_custommem(frag);
+    test_custommem_box64(frag);
 }
 
 

@@ -32,15 +32,10 @@ typedef struct blocklist_s {
     rb_t                free_list;
 } blocklist_t;
 
-
-#define MMAPSIZE64 (64*2048)   // allocate 128kb sized blocks for 64byte map
-#define MMAPSIZE128 (128*1024)  // allocate 128kb sized blocks for 128byte map
-#define DYNMMAPSZ (2*1024*1024) // allocate 2Mb block for dynarec
-#define DYNMMAPSZ0 (128*1024)   // allocate 128kb block for 1st page, to avoid wasting too much memory on small program / libs
-
 static int                 n_blocks = 0;       // number of blocks for custom malloc
 static int                 c_blocks = 0;       // capacity of blocks for custom malloc
 static blocklist_t*        p_blocks = NULL;    // actual blocks for custom malloc
+
 
 #define NEXT_BLOCK(b) (blockmark_t*)((uintptr_t)(b) + (b)->next.offs)
 #define PREV_BLOCK(b) (blockmark_t*)(((uintptr_t)(b) - (b)->prev.offs))
@@ -91,13 +86,13 @@ static rb_node_t* rb_lower_bound(rb_t* t, size_t need) {
 // get first subblock free in block. Return NULL if no block, else first subblock free (mark included), filling size
 static blockmark_t* getFirstBlock(rb_t* tree, size_t maxsize, size_t* size, void* start)
 {
-   rb_node_t* block = rb_lower_bound(tree, maxsize); 
-   if(block){
-        blockmark_t *m = block_node(block);
-        rb_remove(tree, block);
-        *size = SIZE_BLOCK(m->next);
-        return m;
-   }
+        rb_node_t* block = rb_lower_bound(tree, maxsize); 
+        if(block){
+            blockmark_t *m = block_node(block);
+            rb_remove(tree, block);
+            *size = SIZE_BLOCK(m->next);
+            return m;
+        }
    return NULL;
 }
 
@@ -132,7 +127,7 @@ static void* allocBlock(rb_t* tree, blockmark_t* sub, size_t size, void** pstart
         m->prev.x32 = s->next.x32;
         m->next.fill = 0;
         m->next.offs = old_offs - size;
-        n->prev.x32 = m->next.x32;
+        n->prev.x32 = m->next.x32; 
         rb_insert(tree, &(m->node));
         n = m;
     } else {
@@ -252,149 +247,27 @@ void add_blockstree(uintptr_t start, uintptr_t end, int idx)
     reent = 0;
 }
 
-// the BTYPE_MAP is a simple bitmap based allocator: it will allocate slices of 128bytes only, from a large 128k mapping
-// the bitmap itself is also allocated in that mapping, as a slice of 128bytes, at the end of the mapping (and so marked as allocated)
-void* map128_customMalloc(size_t size, int is32bits)
-{
-    //printf("map128_customMalloc\n");
-    size = 128;
-    for(int i=0; i<n_blocks; ++i) {
-        if(p_blocks[i].block && (p_blocks[i].type == BTYPE_MAP) && p_blocks[i].maxfree) {
-            // look for a free block
-            uint8_t* map = p_blocks[i].first;
-            for(uint32_t idx=p_blocks[i].lowest; idx<(p_blocks[i].size>>7); ++idx) {
-                if(!(idx&7) && map[idx>>3]==0xff)
-                    idx+=7;
-                else if(!(map[idx>>3]&(1<<(idx&7)))) {
-                    map[idx>>3] |= 1<<(idx&7);
-                    p_blocks[i].maxfree -= 128;
-                    p_blocks[i].lowest = idx+1;
-                    return p_blocks[i].block+(idx<<7);
-                }
-            }
-        }
-    }
-    // add a new block
-    int i = n_blocks++;
-    if(n_blocks>c_blocks) {
-        c_blocks += 8;
-        p_blocks = (blocklist_t*)realloc(p_blocks, c_blocks*sizeof(blocklist_t));// just use realloa
-    }
-    size_t allocsize = MMAPSIZE128;
-    p_blocks[i].block = NULL;   // incase there is a re-entrance
-    p_blocks[i].first = NULL;
-    p_blocks[i].size = 0;
-    void* p = mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-    size_t mapsize = (allocsize/128)/8;
-    mapsize = (mapsize+127)&~127LL;
-    p_blocks[i].type = BTYPE_MAP;
-    p_blocks[i].block = p;
-    p_blocks[i].first = p+allocsize-mapsize;
-    p_blocks[i].size = allocsize;
-    // setup marks
-    uint8_t* map = p_blocks[i].first;
-    for(int idx=(allocsize-mapsize)>>7;  idx<(allocsize>>7); ++idx)
-        map[idx>>3] |= (1<<(idx&7));
-    // 32bits check
-    if(is32bits && p>(void*)0xffffffffLL) {
-        p_blocks[i].maxfree = allocsize - mapsize;
-        return NULL;
-    }
-    // alloc 1st block
-    void* ret = p_blocks[i].block;
-    map[0] |= 1;
-    p_blocks[i].lowest = 1;
-    p_blocks[i].maxfree = allocsize - (mapsize+128);
-    add_blockstree((uintptr_t)p, (uintptr_t)p+allocsize, i);
-    return ret;
+int compare_maxfree(const void *a, const void *b) {
+    const blocklist_t *x = a;
+    const blocklist_t *y = b;
+    return (x->maxfree > y->maxfree) - (x->maxfree < y->maxfree);
 }
-// the BTYPE_MAP64 is a simple bitmap based allocator: it will allocate slices of 64bytes only, from a large 64k mapping
-// the bitmap itself is also allocated in that mapping, as a slice of 256bytes, at the end of the mapping (and so marked as allocated)
-void* map64_customMalloc(size_t size, int is32bits)
-{
-    printf("!!!map64_customMalloc\n");
-    size = 64;
-    //int* ptr = NULL;
-    //printf("%d\n", *ptr);
-    for(int i = 0; i < n_blocks; ++i) {
-        if (p_blocks[i].block
-         && p_blocks[i].type == BTYPE_MAP64
-         && p_blocks[i].maxfree
-        ) {
-            uint16_t* map = p_blocks[i].first;
-            uint32_t slices = p_blocks[i].size >> 6; 
-            for (uint32_t idx = p_blocks[i].lowest; idx < slices; ++idx) {
-                if (!(idx & 15) && map[idx >> 4] == 0xFFFF)
-                    idx += 15;
-                else if (!(map[idx >> 4] & (1u << (idx & 15)))) {
-                    map[idx >> 4] |= 1u << (idx & 15);
-                    p_blocks[i].maxfree -= 64;
-                    p_blocks[i].lowest = idx + 1;
-                    return p_blocks[i].block + (idx << 6);
-                }
-            }
-        }
-    }
-    int i = n_blocks++;
-    if (n_blocks > c_blocks) {
-        c_blocks += 8;
-        p_blocks = (blocklist_t*)realloc(p_blocks, c_blocks * sizeof(blocklist_t));
-    }
 
-    size_t allocsize = MMAPSIZE64; 
-    p_blocks[i].block = NULL;    // guard re-entrance
-    p_blocks[i].first = NULL;
-    p_blocks[i].size  = 0;
 
-    void* p = mmap(NULL, allocsize, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-    size_t mapsize = (allocsize / 64) / 8; 
-    mapsize = (mapsize + 255) & ~255LL;
-
-    p_blocks[i].type  = BTYPE_MAP64;
-    p_blocks[i].block = p;
-    p_blocks[i].first = p+allocsize-mapsize;
-    p_blocks[i].size  = allocsize;
-
-    // mark the bitmap area itself as "used"
-    uint16_t* map = p_blocks[i].first;
-    for (size_t idx = (allocsize - mapsize) >> 6; idx < (allocsize >> 6); ++idx) {
-        map[idx >> 4] |= 1u << (idx & 15);
-    }
-
-    if (is32bits && p > (void*)0xffffffffLL) {
-        p_blocks[i].maxfree = allocsize - mapsize;
-        return NULL;
-    }
-
-    void* ret = p_blocks[i].block;
-    map[0] |= 1u;
-    p_blocks[i].lowest  = 1;
-    p_blocks[i].maxfree = allocsize - (mapsize + 64);
-    add_blockstree((uintptr_t)p, (uintptr_t)p + allocsize, i);
-    return ret;
-}
 
 void* internal_customMalloc(size_t size, int is32bits)
 {
-    //printf("Size = %lld\n", size);
-    if(size<=64)
-        return map64_customMalloc(size, is32bits);
-    if(size<=128)
-        return map128_customMalloc(size, is32bits);
-    //makeprintf("internal_customMalloc\n");
-    //check
+    if(size<=128){
+        size = 129;
+    }
     size_t init_size = size;
     size = roundSize(size);
     // look for free space
     blockmark_t* sub = NULL;
     size_t fullsize = size+2*sizeof(blockmark_t);
-    //printf("n_block = %d\n", n_blocks);
-    // selecet the block with count > 1 first then select the count = 1
     for(int i=0; i<n_blocks; ++i) {
         if(p_blocks[i].block && (p_blocks[i].type == BTYPE_LIST) && p_blocks[i].maxfree>=init_size) {
-            //printf("good p_blocks[%d].block \n", i);
-            //if(p_blocks[i].free_list.count == 1 && p_blocks[i].size > p_blocks[i].maxfree + sizeof(blocklist_t)*2)
-            //    continue;
+            //printf("i = %d maxfree = %d\n",i,  p_blocks->maxfree);
             size_t rsize = 0;
             sub = getFirstBlock(&(p_blocks[i].free_list), init_size, &rsize, p_blocks[i].first);
             if(sub) {
@@ -405,21 +278,21 @@ void* internal_customMalloc(size_t size, int is32bits)
                 void* ret = allocBlock(&(p_blocks[i].free_list), sub, size, &p_blocks[i].first);
                 if(rsize==p_blocks[i].maxfree)
                     p_blocks[i].maxfree = getMaxFreeBlock(&(p_blocks[i].free_list), p_blocks[i].size, p_blocks[i].first);
-                    //printf("count = %d\n", p_blocks[i].free_list.count);
+                    //sort = true;
                 return ret;
             }
-        }
+        }else{
         rb_block_check(p_blocks[i].block, &(p_blocks[i].free_list));
+        }
     }
     // add a new block
-    //printf("bb n_block = %d\n", n_blocks);
     int i = n_blocks++;
     //printf("need new block\n");
     if(n_blocks>c_blocks) {
         c_blocks += 8;
         p_blocks = (blocklist_t*)realloc(p_blocks, c_blocks*sizeof(blocklist_t));
     }
-    size_t allocsize = (fullsize>MMAPSIZE)?fullsize:MMAPSIZE;
+    size_t allocsize = (fullsize>MMAPSIZE_RB)?fullsize:MMAPSIZE_RB;
     allocsize = (allocsize+box64_pagesize-1)&~(box64_pagesize-1);
     if(is32bits) allocsize = (allocsize+0xffffLL)&~(0xffffLL);
     p_blocks[i].block = NULL;   // incase there is a re-entrance
@@ -527,13 +400,13 @@ size_t fini_custommem_helper()
     free(p_blocks);
     p_blocks = NULL;
     //printf("Allocations = %d\n", N);
-    printf("Native Size = %d\n", (n_blocks*MMAPSIZE));
-    printf("MMAPSIZE = %d\n", MMAPSIZE);
+    printf("Native Size = %d\n", (n_blocks*MMAPSIZE_RB));
+    printf("MMAPSIZE = %d\n", MMAPSIZE_RB);
     printf("mmap times = %d\n", n_blocks);
     printf("===================================== End ===================================== \n");
     n_blocks = 0;       // number of blocks for custom malloc
     c_blocks = 0;  
-    return n_blocks*MMAPSIZE; // Native Size
+    return n_blocks*MMAPSIZE_RB; // Native Size
 }
 
 /*For Box64*/
@@ -723,11 +596,9 @@ void add_blockstree_box64_box64(uintptr_t start, uintptr_t end, int idx)
 
 void* internal_customMalloc_box64(size_t size, int is32bits)
 {
-    //printf("Size = %lld\n", size);
-    if(size<=64)
-        return map64_customMalloc(size, is32bits);
-    if(size<=128)
-        return map128_customMalloc(size, is32bits);
+    if(size<=128){
+       size = 129;
+    }
     //makeprintf("internal_customMalloc_box64\n");
     size_t init_size = size;
     size = roundSize_box64(size);
@@ -856,7 +727,7 @@ size_t fini_custommem_helper_box64()
         munmap(p_blocks_box64[i].block, p_blocks_box64[i].size);
     free(p_blocks_box64);
     p_blocks_box64 = NULL;
-    printf("Native Size = %d MB\n", (n_blocks_box64*MMAPSIZE)/(1048576));
+    printf("Native Size = %d\n", (n_blocks_box64*MMAPSIZE));
     printf("MMAPSIZE = %d\n", MMAPSIZE);
     printf("mmap times = %d\n", n_blocks_box64);
     printf("===================================== End ===================================== \n");
